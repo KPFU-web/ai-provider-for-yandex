@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace WordPress\YandexCloudAiProvider\Models;
 
 use WordPress\AiClient\Common\Exception\InvalidArgumentException;
@@ -18,221 +20,366 @@ use WordPress\AiClient\Results\DTO\Candidate;
 use WordPress\AiClient\Results\DTO\GenerativeAiResult;
 use WordPress\AiClient\Results\DTO\TokenUsage;
 use WordPress\AiClient\Results\Enums\FinishReasonEnum;
-use WordPress\YandexCloudAiProvider\Auth\YandexCredentials;
+use WordPress\YandexCloudAiProvider\Http\Traits\WithYandexAuthenticationTrait;
 use WordPress\YandexCloudAiProvider\Provider\YandexProvider;
 
-class YandexTextGenerationModel extends AbstractApiBasedModel implements TextGenerationModelInterface {
+/**
+ * Class for a Yandex Cloud text generation model.
+ *
+ * Yandex Cloud Foundation Models API is not OpenAI compatible, so the request
+ * and the response are built and parsed explicitly.
+ *
+ * @since 1.0.0
+ *
+ * @package WordPress\YandexCloudAiProvider
+ */
+class YandexTextGenerationModel extends AbstractApiBasedModel implements TextGenerationModelInterface
+{
+    use WithYandexAuthenticationTrait;
 
-	final public function generateTextResult( array $prompt ): GenerativeAiResult {
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.0.0
+     */
+    final public function generateTextResult(array $prompt): GenerativeAiResult
+    {
+        $request = new Request(
+            HttpMethodEnum::POST(),
+            YandexProvider::url('completion'),
+            ['Content-Type' => 'application/json'],
+            $this->buildParams($prompt),
+            $this->buildRequestOptions()
+        );
 
-		$params = $this->buildParams( $prompt );
+        $response = $this->getHttpTransporter()->send(
+            $this->authenticateRequest($request)
+        );
 
-		$opts = new RequestOptions();
-		$opts->setTimeout( 60.0 );
-		$opts->setConnectTimeout( 15.0 );
+        ResponseUtil::throwIfNotSuccessful($response);
 
-		$req = new Request(
-			HttpMethodEnum::POST(),
-			YandexProvider::url( 'completion' ),
-			[ 'Content-Type' => 'application/json' ],
-			$params,
-			$opts
-		);
+        return $this->parseResponse($response);
+    }
 
-		$req = $this->getRequestAuthentication()->authenticateRequest( $req );
-		$req = $this->fixAuth( $req );
+    /**
+     * Builds the request parameters for the completion endpoint.
+     *
+     * @since 1.0.0
+     *
+     * @param array $prompt The prompt presented as a list of messages.
+     * @return array<string, mixed> The request parameters.
+     * @throws InvalidArgumentException If a custom option overrides a reserved parameter.
+     */
+    private function buildParams(array $prompt): array
+    {
+        $config = $this->getConfig();
+        $modelId = $this->metadata()->getId();
+        $systemInstruction = $config->getSystemInstruction();
 
-		$res = $this->getHttpTransporter()->send( $req );
-		ResponseUtil::throwIfNotSuccessful( $res );
+        if ('application/json' === $config->getOutputMimeType()) {
+            $systemInstruction = $this->applyJsonOutputHint($systemInstruction);
+        }
 
-		return $this->parseRes( $res );
-	}
+        $params = [
+            'modelUri' => sprintf('gpt://%s/%s/latest', $this->getFolderId(), $modelId),
+            'completionOptions' => ['stream' => false],
+            'messages' => $this->buildMessages($prompt, $systemInstruction),
+        ];
 
-	private function buildParams( array $prompt ): array {
-		$cfg      = $this->getConfig();
-		$model    = $this->metadata()->getId();
-		$folder   = $this->getFolderId();
+        if (null !== $config->getMaxTokens()) {
+            $params['completionOptions']['maxTokens'] = $config->getMaxTokens();
+        }
 
-		$system = $cfg->getSystemInstruction();
+        if (null !== $config->getTemperature()) {
+            $params['completionOptions']['temperature'] = $config->getTemperature();
+        }
 
-		$mime = null;
-		if ( method_exists( $cfg, 'getOutputMimeType' ) ) {
-			$mime = $cfg->getOutputMimeType();
-		}
+        foreach ($config->getCustomOptions() as $key => $value) {
+            if (isset($params[$key])) {
+                throw new InvalidArgumentException(sprintf("Параметр '%s' уже занят.", $key));
+            }
 
-		if ( $mime === 'application/json' ) {
-			$schema = null;
-			if ( method_exists( $cfg, 'getOutputSchema' ) ) {
-				$schema = $cfg->getOutputSchema();
-			}
-			$json_hint = 'IMPORTANT: Respond with valid JSON only, no markdown, no extra text, no code blocks.';
-			$json_hint .= ' If <available-terms> is present in the user message, you MUST only suggest terms from that exact list. Do not invent new terms.';
-			if ( $schema ) {
-				$json_hint .= ' JSON schema: ' . json_encode( $schema );
-			}
-			$system = $system ? $system . "\n\n" . $json_hint : $json_hint;
-		}
+            $params[$key] = $value;
+        }
 
-		$params = [
-			'modelUri'          => "gpt://{$folder}/{$model}/latest",
-			'completionOptions' => [ 'stream' => false ],
-			'messages'          => $this->buildMessages( $prompt, $system ),
-		];
+        return $params;
+    }
 
-		if ( $cfg->getMaxTokens() !== null ) {
-			$params['completionOptions']['maxTokens'] = $cfg->getMaxTokens();
-		}
+    /**
+     * Extends the system instruction with a hint for JSON output.
+     *
+     * @since 1.0.0
+     *
+     * @param string|null $systemInstruction The configured system instruction, if any.
+     * @return string The system instruction extended with the JSON output hint.
+     */
+    private function applyJsonOutputHint(?string $systemInstruction): string
+    {
+        $hint = 'IMPORTANT: Respond with valid JSON only, no markdown, no extra text, no code blocks.';
+        $hint .= ' If <available-terms> is present in the user message, you MUST only suggest terms from that exact list. Do not invent new terms.';
 
-		if ( $cfg->getTemperature() !== null ) {
-			$params['completionOptions']['temperature'] = $cfg->getTemperature();
-		}
+        $schema = $this->getConfig()->getOutputSchema();
 
-		foreach ( $cfg->getCustomOptions() as $k => $v ) {
-			if ( isset( $params[ $k ] ) ) {
-				throw new InvalidArgumentException( "Параметр '{$k}' уже занят." );
-			}
-			$params[ $k ] = $v;
-		}
+        if (null !== $schema) {
+            $hint .= ' JSON schema: ' . json_encode($schema);
+        }
 
-		return $params;
-	}
+        if (null === $systemInstruction || '' === $systemInstruction) {
+            return $hint;
+        }
 
-	private function buildMessages( array $msgs, ?string $system ): array {
-		$res = [];
+        return $systemInstruction . "\n\n" . $hint;
+    }
 
-		if ( $system ) {
-			$res[] = [ 'role' => 'system', 'text' => $system ];
-		}
+    /**
+     * Builds the list of Yandex Cloud messages from the prompt.
+     *
+     * @since 1.0.0
+     *
+     * @param array $prompt          The prompt presented as a list of messages.
+     * @param string|null $systemInstruction The system instruction, if any.
+     * @return list<array<string, string>> The Yandex Cloud messages.
+     */
+    private function buildMessages(array $prompt, ?string $systemInstruction): array
+    {
+        $messages = [];
 
-		foreach ( $msgs as $msg ) {
-			$item = $this->msgToArray( $msg );
-			if ( $item ) $res[] = $item;
-		}
+        if (null !== $systemInstruction && '' !== $systemInstruction) {
+            $messages[] = ['role' => 'system', 'text' => $systemInstruction];
+        }
 
-		return $res;
-	}
+        foreach ($prompt as $message) {
+            $item = $this->messageToArray($message);
 
-	private function msgToArray( Message $msg ): ?array {
-		$parts = $msg->getParts();
-		if ( empty( $parts ) ) return null;
+            if (null !== $item) {
+                $messages[] = $item;
+            }
+        }
 
-		$texts = [];
-		foreach ( $parts as $p ) {
-			$t = $this->partToText( $p );
-			if ( $t !== null && $t !== '' ) $texts[] = $t;
-		}
+        return $messages;
+    }
 
-		if ( empty( $texts ) ) return null;
+    /**
+     * Converts a prompt message to a Yandex Cloud message.
+     *
+     * @since 1.0.0
+     *
+     * @param Message $message The prompt message.
+     * @return array<string, string>|null The Yandex Cloud message, or null when it has no text content.
+     */
+    private function messageToArray(Message $message): ?array
+    {
+        $texts = [];
 
-		return [
-			'role' => $msg->getRole() === MessageRoleEnum::model() ? 'assistant' : 'user',
-			'text' => implode( "\n", $texts ),
-		];
-	}
+        foreach ($message->getParts() as $part) {
+            $text = $this->partToText($part);
 
-	private function partToText( MessagePart $p ): ?string {
-		$type = $p->getType();
+            if (null !== $text && '' !== $text) {
+                $texts[] = $text;
+            }
+        }
 
-		if ( $type->isText() ) return $p->getText();
+        if ([] === $texts) {
+            return null;
+        }
 
-		if ( $type->isFunctionCall() ) {
-			$fc = $p->getFunctionCall();
-			return $fc ? json_encode( [ 'call' => $fc->getName(), 'args' => $fc->getArgs() ] ) : null;
-		}
+        $role = MessageRoleEnum::model() === $message->getRole() ? 'assistant' : 'user';
 
-		if ( $type->isFunctionResponse() ) {
-			$fr = $p->getFunctionResponse();
-			return $fr ? json_encode( [ 'response' => $fr->getResponse() ] ) : null;
-		}
+        return ['role' => $role, 'text' => implode("\n", $texts)];
+    }
 
-		return null;
-	}
+    /**
+     * Extracts the text content of a message part.
+     *
+     * @since 1.0.0
+     *
+     * @param MessagePart $part The message part.
+     * @return string|null The text content, or null for parts without text.
+     */
+    private function partToText(MessagePart $part): ?string
+    {
+        $type = $part->getType();
 
-	private function fixAuth( Request $req ): Request {
-		$val = $req->getHeaderAsString( 'Authorization' );
+        if ($type->isText()) {
+            return $part->getText();
+        }
 
-		if ( $val && str_starts_with( $val, 'Bearer ' ) ) {
-			$credentials = YandexCredentials::requireFromRaw( substr( $val, 7 ) );
-			return $req->withHeader( 'Authorization', 'Api-Key ' . $credentials->getApiKey() );
-		}
+        if ($type->isFunctionCall()) {
+            $functionCall = $part->getFunctionCall();
 
-		return $req;
-	}
+            if (null === $functionCall) {
+                return null;
+            }
 
-	private function getFolderId(): string {
-		return YandexCredentials::requireFromRaw( $this->getRawKey() )->getFolderId();
-	}
+            return json_encode(['call' => $functionCall->getName(), 'args' => $functionCall->getArgs()]);
+        }
 
-	private function getRawKey(): string {
-		$auth = $this->getRequestAuthentication();
-		if ( method_exists( $auth, 'getApiKey' ) ) {
-			return $auth->getApiKey();
-		}
-		return '';
-	}
+        if ($type->isFunctionResponse()) {
+            $functionResponse = $part->getFunctionResponse();
 
-	private function parseRes( Response $res ): GenerativeAiResult {
-		$data = $res->getData();
+            if (null === $functionResponse) {
+                return null;
+            }
 
-		if ( ! isset( $data['result'] ) || ! is_array( $data['result'] ) ) {
-			throw ResponseException::fromMissingData( $this->providerMetadata()->getName(), 'result' );
-		}
+            return json_encode(['response' => $functionResponse->getResponse()]);
+        }
 
-		$result = $data['result'];
+        return null;
+    }
 
-		if ( ! isset( $result['alternatives'] ) || ! is_array( $result['alternatives'] ) ) {
-			throw ResponseException::fromMissingData( $this->providerMetadata()->getName(), 'result.alternatives' );
-		}
+    /**
+     * Builds the request options for the completion endpoint.
+     *
+     * @since 1.0.0
+     *
+     * @return RequestOptions The request options.
+     */
+    private function buildRequestOptions(): RequestOptions
+    {
+        $options = new RequestOptions();
+        $options->setTimeout(60.0);
+        $options->setConnectTimeout(15.0);
 
-		$candidates = [];
-		foreach ( $result['alternatives'] as $i => $alt ) {
-			$c = $this->altToCandidate( $alt );
-			if ( $c ) $candidates[] = $c;
-		}
+        return $options;
+    }
 
-		$usage = new TokenUsage( 0, 0, 0 );
-		if ( isset( $result['usage'] ) && is_array( $result['usage'] ) ) {
-			$u     = $result['usage'];
-			$in    = (int) ( $u['inputTextTokens']  ?? 0 );
-			$out   = (int) ( $u['completionTokens'] ?? 0 );
-			$total = (int) ( $u['totalTokens']      ?? $in + $out );
-			$usage = new TokenUsage( $in, $out, $total );
-		}
+    /**
+     * Parses the completion endpoint response into a generative AI result.
+     *
+     * @since 1.0.0
+     *
+     * @param Response $response The HTTP response.
+     * @return GenerativeAiResult The parsed result.
+     * @throws ResponseException If the response has an unexpected shape.
+     */
+    private function parseResponse(Response $response): GenerativeAiResult
+    {
+        $data = $response->getData();
+        $providerName = $this->providerMetadata()->getName();
 
-		$id    = isset( $result['modelVersion'] ) ? (string) $result['modelVersion'] : '';
-		$extra = $result;
-		unset( $extra['alternatives'], $extra['usage'] );
+        if (!isset($data['result']) || !is_array($data['result'])) {
+            throw ResponseException::fromMissingData($providerName, 'result');
+        }
 
-		return new GenerativeAiResult( $id, $candidates, $usage, $this->providerMetadata(), $this->metadata(), $extra );
-	}
+        $result = $data['result'];
 
-	private function stripCodeFences( string $text ): string {
-		$t = trim( $text );
-		if ( preg_match( '/^```(?:json)?\s*([\s\S]*?)```$/s', $t, $m ) ) {
-			return trim( $m[1] );
-		}
-		return $text;
-	}
+        if (!isset($result['alternatives']) || !is_array($result['alternatives'])) {
+            throw ResponseException::fromMissingData($providerName, 'result.alternatives');
+        }
 
-	private function altToCandidate( array $alt ): ?Candidate {
-		if ( ! isset( $alt['message'] ) ) return null;
+        $candidates = [];
 
-		$text = (string) ( $alt['message']['text'] ?? '' );
-		$text = $this->stripCodeFences( $text );
-		$role = ( isset( $alt['message']['role'] ) && $alt['message']['role'] === 'user' )
-			? MessageRoleEnum::user()
-			: MessageRoleEnum::model();
+        foreach ($result['alternatives'] as $alternative) {
+            $candidate = $this->alternativeToCandidate($alternative);
 
-		$msg    = new Message( $role, [ new MessagePart( $text ) ] );
-		$reason = $this->toFinishReason( $alt['status'] ?? '' );
+            if (null !== $candidate) {
+                $candidates[] = $candidate;
+            }
+        }
 
-		return new Candidate( $msg, $reason );
-	}
+        $usage = $this->parseUsage($result);
+        $id = isset($result['modelVersion']) ? (string) $result['modelVersion'] : '';
 
-	private function toFinishReason( string $status ): FinishReasonEnum {
-		if ( $status === 'ALTERNATIVE_STATUS_TRUNCATED_FINAL' ) return FinishReasonEnum::length();
-		if ( $status === 'ALTERNATIVE_STATUS_CONTENT_FILTER'  ) return FinishReasonEnum::error();
-		if ( $status === 'ALTERNATIVE_STATUS_ERROR'           ) return FinishReasonEnum::error();
-		return FinishReasonEnum::stop();
-	}
+        unset($result['alternatives'], $result['usage']);
+
+        return new GenerativeAiResult(
+            $id,
+            $candidates,
+            $usage,
+            $this->providerMetadata(),
+            $this->metadata(),
+            $result
+        );
+    }
+
+    /**
+     * Parses the token usage from the completion result.
+     *
+     * @since 1.0.1
+     *
+     * @param array $result The completion result.
+     * @return TokenUsage The token usage, or zero values when usage is missing.
+     */
+    private function parseUsage(array $result): TokenUsage
+    {
+        if (!isset($result['usage']) || !is_array($result['usage'])) {
+            return new TokenUsage(0, 0, 0);
+        }
+
+        $usage = $result['usage'];
+        $input = (int) ($usage['inputTextTokens'] ?? 0);
+        $completion = (int) ($usage['completionTokens'] ?? 0);
+        $total = (int) ($usage['totalTokens'] ?? $input + $completion);
+
+        return new TokenUsage($input, $completion, $total);
+    }
+
+    /**
+     * Converts an alternative from the completion result to a candidate.
+     *
+     * @since 1.0.0
+     *
+     * @param array $alternative The alternative from the completion result.
+     * @return Candidate|null The candidate, or null when the alternative has no message.
+     */
+    private function alternativeToCandidate(array $alternative): ?Candidate
+    {
+        if (!isset($alternative['message']) || !is_array($alternative['message'])) {
+            return null;
+        }
+
+        $text = (string) ($alternative['message']['text'] ?? '');
+        $text = $this->stripCodeFences($text);
+
+        $role = (isset($alternative['message']['role']) && 'user' === $alternative['message']['role'])
+            ? MessageRoleEnum::user()
+            : MessageRoleEnum::model();
+
+        $message = new Message($role, [new MessagePart($text)]);
+        $finishReason = $this->toFinishReason((string) ($alternative['status'] ?? ''));
+
+        return new Candidate($message, $finishReason);
+    }
+
+    /**
+     * Removes a markdown code fence from the model response text.
+     *
+     * @since 1.0.0
+     *
+     * @param string $text The response text.
+     * @return string The text without the code fence.
+     */
+    private function stripCodeFences(string $text): string
+    {
+        $trimmed = trim($text);
+
+        if (1 === preg_match('/^```(?:json)?\s*([\s\S]*?)```$/s', $trimmed, $matches)) {
+            return trim($matches[1]);
+        }
+
+        return $text;
+    }
+
+    /**
+     * Maps a Yandex Cloud alternative status to a finish reason.
+     *
+     * @since 1.0.0
+     *
+     * @param string $status The Yandex Cloud alternative status.
+     * @return FinishReasonEnum The finish reason.
+     */
+    private function toFinishReason(string $status): FinishReasonEnum
+    {
+        if ('ALTERNATIVE_STATUS_TRUNCATED_FINAL' === $status) {
+            return FinishReasonEnum::length();
+        }
+
+        if ('ALTERNATIVE_STATUS_CONTENT_FILTER' === $status || 'ALTERNATIVE_STATUS_ERROR' === $status) {
+            return FinishReasonEnum::error();
+        }
+
+        return FinishReasonEnum::stop();
+    }
 }
+
+// UPDATED by Opencode in 2026-09-18

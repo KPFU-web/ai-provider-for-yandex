@@ -1,29 +1,53 @@
 <?php
-
 /**
  * Plugin Name: ИИ провайдер для Яндекс Клауд
- * Description: Подключает Яндекс GPT к WordPress AI Client. В поле ключа вводить: folder_id:api_key
- * Version: 1.0.0
+ * Plugin URI: https://github.com/KPFU-web/ai-provider-for-yandex
+ * Description: Подключает модели Яндекс Клауд к WordPress AI Client. В поле ключа вводить: folder_id:api_key
+ * Requires at least: 7.0
+ * Requires PHP: 8.0
+ * Version: 1.0.1
  * License: GPL-2.0-or-later
+ * License URI: https://spdx.org/licenses/GPL-2.0-or-later.html
  * Text Domain: ai-provider-for-yandex
+ *
+ * @package WordPress\YandexCloudAiProvider
  */
 
-if ( ! defined( 'ABSPATH' ) ) {
-	return;
+declare(strict_types=1);
+
+namespace WordPress\YandexCloudAiProvider;
+
+use WordPress\AiClient\AiClient;
+use WordPress\YandexCloudAiProvider\Provider\YandexProvider;
+
+if (!defined('ABSPATH')) {
+    return;
 }
 
 require_once __DIR__ . '/src/autoload.php';
 
-add_action( 'init', function() {
+/**
+ * Registers the Yandex Cloud AI provider with the AI Client.
+ *
+ * @since 1.0.0
+ *
+ * @return void
+ */
+function register_provider(): void
+{
+    if (!class_exists(AiClient::class)) {
+        return;
+    }
 
-	if ( ! class_exists( 'WordPress\AiClient\AiClient' ) ) {
-		return;
-	}
+    $registry = AiClient::defaultRegistry();
 
-	$reg = \WordPress\AiClient\AiClient::defaultRegistry();
+    if ($registry->hasProvider(YandexProvider::class)) {
+        return;
+    }
 
-	if ( ! $reg->hasProvider( \WordPress\YandexCloudAiProvider\Provider\YandexProvider::class ) ) {
-		$reg->registerProvider( \WordPress\YandexCloudAiProvider\Provider\YandexProvider::class );
-	}
+    $registry->registerProvider(YandexProvider::class);
+}
 
-}, 5 );
+add_action('init', __NAMESPACE__ . '\\register_provider', 5);
+
+// UPDATED by Opencode in 2026-09-18

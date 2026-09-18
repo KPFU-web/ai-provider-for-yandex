@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace WordPress\YandexCloudAiProvider\Metadata;
 
+use WordPress\AiClient\Common\Exception\InvalidArgumentException;
 use WordPress\AiClient\Files\Enums\FileTypeEnum;
 use WordPress\AiClient\Files\Enums\MediaOrientationEnum;
 use WordPress\AiClient\Messages\Enums\ModalityEnum;
@@ -11,94 +14,160 @@ use WordPress\AiClient\Providers\Models\DTO\SupportedOption;
 use WordPress\AiClient\Providers\Models\Enums\CapabilityEnum;
 use WordPress\AiClient\Providers\Models\Enums\OptionEnum;
 
-class YandexModelMetadataDirectory implements ModelMetadataDirectoryInterface {
+/**
+ * Class for the Yandex Cloud model metadata directory.
+ *
+ * Yandex Cloud does not expose a public endpoint for listing the available
+ * models, so the supported models are registered statically.
+ *
+ * @since 1.0.0
+ *
+ * @package WordPress\YandexCloudAiProvider
+ */
+class YandexModelMetadataDirectory implements ModelMetadataDirectoryInterface
+{
+    /**
+     * The cached map of model ID to model metadata.
+     *
+     * @since 1.0.1
+     *
+     * @var array<string, ModelMetadata>|null
+     */
+    private ?array $modelsMap = null;
 
-	private function getTextModels(): array {
-		$caps = [
-			CapabilityEnum::textGeneration(),
-			CapabilityEnum::chatHistory(),
-		];
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.0.0
+     *
+     * @return list<ModelMetadata> Array of model metadata.
+     */
+    public function listModelMetadata(): array
+    {
+        return array_values($this->getModelsMap());
+    }
 
-		$opts = [
-			new SupportedOption( OptionEnum::systemInstruction() ),
-			new SupportedOption( OptionEnum::maxTokens() ),
-			new SupportedOption( OptionEnum::temperature() ),
-			new SupportedOption( OptionEnum::inputModalities(), [ [ ModalityEnum::text() ] ] ),
-			new SupportedOption( OptionEnum::outputModalities(), [ [ ModalityEnum::text() ] ] ),
-			new SupportedOption( OptionEnum::outputMimeType(), [ 'text/plain', 'application/json' ] ),
-			new SupportedOption( OptionEnum::outputSchema() ),
-			new SupportedOption( OptionEnum::customOptions() ),
-		];
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.0.0
+     */
+    public function hasModelMetadata(string $modelId): bool
+    {
+        return isset($this->getModelsMap()[$modelId]);
+    }
 
-		return [
-			new ModelMetadata( 'yandexgpt',           'YandexGPT Pro',    $caps, $opts ),
-			new ModelMetadata( 'yandexgpt-lite',      'YandexGPT Lite',   $caps, $opts ),
-			new ModelMetadata( 'yandexgpt-32k',       'YandexGPT Pro 32K',$caps, $opts ),
-			new ModelMetadata( 'llama',               'Llama 3.3 70B',    $caps, $opts ),
-			new ModelMetadata( 'llama-lite',          'Llama 3.1 8B',     $caps, $opts ),
-			new ModelMetadata( 'qwen3-235b-a22b-fp8', 'Qwen3 235B',       $caps, $opts ),
-			new ModelMetadata( 'gpt-oss-120b',        'GPT OSS 120B',     $caps, $opts ),
-			new ModelMetadata( 'gpt-oss-20b',         'GPT OSS 20B',      $caps, $opts ),
-		];
-	}
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.0.0
+     */
+    public function getModelMetadata(string $modelId): ModelMetadata
+    {
+        $modelsMap = $this->getModelsMap();
 
-	private function getImageModels(): array {
-		$caps = [
-			CapabilityEnum::imageGeneration(),
-		];
+        if (!isset($modelsMap[$modelId])) {
+            throw new InvalidArgumentException(
+                sprintf('No model with ID %s was found in the provider', $modelId)
+            );
+        }
 
-		$opts = [
-			new SupportedOption( OptionEnum::inputModalities(), [ [ ModalityEnum::text() ] ] ),
-			new SupportedOption( OptionEnum::outputModalities(), [ [ ModalityEnum::image() ] ] ),
-			new SupportedOption( OptionEnum::outputMimeType(), [ 'image/jpeg' ] ),
-			new SupportedOption( OptionEnum::outputFileType(), [ FileTypeEnum::inline() ] ),
-			new SupportedOption( OptionEnum::outputMediaOrientation(), [
-				MediaOrientationEnum::square(),
-				MediaOrientationEnum::landscape(),
-				MediaOrientationEnum::portrait(),
-			] ),
-			new SupportedOption( OptionEnum::outputMediaAspectRatio(), [ '1:1', '2:1', '1:2', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16' ] ),
-			new SupportedOption( OptionEnum::customOptions() ),
-		];
+        return $modelsMap[$modelId];
+    }
 
-		return [
-			new ModelMetadata( 'yandex-art', 'YandexART', $caps, $opts ),
-			new ModelMetadata( 'yandex-art-2.0', 'YandexART 2.0', $caps, $opts ),
-		];
-	}
+    /**
+     * Returns the map of model ID to model metadata.
+     *
+     * The map is built once and cached for the lifetime of the instance.
+     *
+     * @since 1.0.1
+     *
+     * @return array<string, ModelMetadata> Map of model ID to model metadata.
+     */
+    private function getModelsMap(): array
+    {
+        if (null === $this->modelsMap) {
+            $this->modelsMap = [];
 
-	private function getModels(): array {
-		return array_merge( $this->getTextModels(), $this->getImageModels() );
-	}
+            $models = array_merge($this->getTextModels(), $this->getImageModels());
 
-	public function listModelMetadata(): array {
-		return $this->getModels();
-	}
+            foreach ($models as $model) {
+                $this->modelsMap[$model->getId()] = $model;
+            }
+        }
 
-	public function hasModelMetadata( string $id ): bool {
-		foreach ( $this->getModels() as $m ) {
-			if ( $m->getId() === $id ) return true;
-		}
-		return false;
-	}
+        return $this->modelsMap;
+    }
 
-	public function getModelMetadata( string $id ): ModelMetadata {
-		foreach ( $this->getModels() as $m ) {
-			if ( $m->getId() === $id ) return $m;
-		}
+    /**
+     * Returns the metadata for the text generation models.
+     *
+     * @since 1.0.0
+     *
+     * @return list<ModelMetadata> Array of model metadata.
+     */
+    private function getTextModels(): array
+    {
+        $capabilities = [
+            CapabilityEnum::textGeneration(),
+            CapabilityEnum::chatHistory(),
+        ];
 
-		$caps = [ CapabilityEnum::textGeneration(), CapabilityEnum::chatHistory() ];
-		$opts = [
-			new SupportedOption( OptionEnum::systemInstruction() ),
-			new SupportedOption( OptionEnum::maxTokens() ),
-			new SupportedOption( OptionEnum::temperature() ),
-			new SupportedOption( OptionEnum::inputModalities(), [ [ ModalityEnum::text() ] ] ),
-			new SupportedOption( OptionEnum::outputModalities(), [ [ ModalityEnum::text() ] ] ),
-			new SupportedOption( OptionEnum::outputMimeType(), [ 'text/plain', 'application/json' ] ),
-			new SupportedOption( OptionEnum::outputSchema() ),
-			new SupportedOption( OptionEnum::customOptions() ),
-		];
+        $options = [
+            new SupportedOption(OptionEnum::systemInstruction()),
+            new SupportedOption(OptionEnum::maxTokens()),
+            new SupportedOption(OptionEnum::temperature()),
+            new SupportedOption(OptionEnum::inputModalities(), [[ModalityEnum::text()]]),
+            new SupportedOption(OptionEnum::outputModalities(), [[ModalityEnum::text()]]),
+            new SupportedOption(OptionEnum::outputMimeType(), ['text/plain', 'application/json']),
+            new SupportedOption(OptionEnum::outputSchema()),
+            new SupportedOption(OptionEnum::customOptions()),
+        ];
 
-		return new ModelMetadata( $id, $id, $caps, $opts );
-	}
+        return [
+            new ModelMetadata('yandexgpt', 'YandexGPT Pro', $capabilities, $options),
+            new ModelMetadata('yandexgpt-lite', 'YandexGPT Lite', $capabilities, $options),
+            new ModelMetadata('yandexgpt-32k', 'YandexGPT Pro 32K', $capabilities, $options),
+            new ModelMetadata('llama', 'Llama 3.3 70B', $capabilities, $options),
+            new ModelMetadata('llama-lite', 'Llama 3.1 8B', $capabilities, $options),
+            new ModelMetadata('qwen3-235b-a22b-fp8', 'Qwen3 235B', $capabilities, $options),
+            new ModelMetadata('gpt-oss-120b', 'GPT OSS 120B', $capabilities, $options),
+            new ModelMetadata('gpt-oss-20b', 'GPT OSS 20B', $capabilities, $options),
+        ];
+    }
+
+    /**
+     * Returns the metadata for the image generation models.
+     *
+     * @since 1.0.0
+     *
+     * @return list<ModelMetadata> Array of model metadata.
+     */
+    private function getImageModels(): array
+    {
+        $capabilities = [
+            CapabilityEnum::imageGeneration(),
+        ];
+
+        $options = [
+            new SupportedOption(OptionEnum::inputModalities(), [[ModalityEnum::text()]]),
+            new SupportedOption(OptionEnum::outputModalities(), [[ModalityEnum::image()]]),
+            new SupportedOption(OptionEnum::outputMimeType(), ['image/jpeg']),
+            new SupportedOption(OptionEnum::outputFileType(), [FileTypeEnum::inline()]),
+            new SupportedOption(OptionEnum::outputMediaOrientation(), [
+                MediaOrientationEnum::square(),
+                MediaOrientationEnum::landscape(),
+                MediaOrientationEnum::portrait(),
+            ]),
+            new SupportedOption(OptionEnum::outputMediaAspectRatio(), ['1:1', '2:1', '1:2', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16']),
+            new SupportedOption(OptionEnum::customOptions()),
+        ];
+
+        return [
+            new ModelMetadata('yandex-art', 'YandexART', $capabilities, $options),
+            new ModelMetadata('yandex-art-2.0', 'YandexART 2.0', $capabilities, $options),
+        ];
+    }
 }
+
+// UPDATED by Opencode in 2026-09-18

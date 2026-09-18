@@ -1,8 +1,9 @@
 <?php
 
+declare(strict_types=1);
+
 namespace WordPress\YandexCloudAiProvider\Provider;
 
-use WordPress\AiClient\AiClient;
 use WordPress\AiClient\Common\Exception\RuntimeException;
 use WordPress\AiClient\Providers\ApiBasedImplementation\AbstractApiProvider;
 use WordPress\AiClient\Providers\Contracts\ModelMetadataDirectoryInterface;
@@ -16,45 +17,117 @@ use WordPress\YandexCloudAiProvider\Metadata\YandexModelMetadataDirectory;
 use WordPress\YandexCloudAiProvider\Models\YandexImageGenerationModel;
 use WordPress\YandexCloudAiProvider\Models\YandexTextGenerationModel;
 
-class YandexProvider extends AbstractApiProvider {
+/**
+ * Class for the AI provider for Yandex Cloud.
+ *
+ * Yandex Cloud Foundation Models API is not OpenAI compatible, so the provider
+ * uses dedicated model classes that speak the Yandex protocol directly.
+ *
+ * @since 1.0.0
+ *
+ * @package WordPress\YandexCloudAiProvider
+ */
+class YandexProvider extends AbstractApiProvider
+{
+    /**
+     * The base domain of the Yandex Cloud AI API.
+     *
+     * @since 1.0.1
+     *
+     * @var string
+     */
+    private const BASE_DOMAIN = 'https://llm.api.cloud.yandex.net';
 
-	protected static function baseUrl(): string {
-		return 'https://llm.api.cloud.yandex.net/foundationModels/v1';
-	}
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.0.0
+     */
+    protected static function baseUrl(): string
+    {
+        return self::BASE_DOMAIN . '/foundationModels/v1';
+    }
 
-	protected static function createModel( ModelMetadata $modelMetadata, ProviderMetadata $providerMetadata ): ModelInterface {
-		foreach ( $modelMetadata->getSupportedCapabilities() as $cap ) {
-			if ( $cap->isTextGeneration() ) {
-				return new YandexTextGenerationModel( $modelMetadata, $providerMetadata );
-			}
-			if ( $cap->isImageGeneration() ) {
-				return new YandexImageGenerationModel( $modelMetadata, $providerMetadata );
-			}
-		}
-		throw new RuntimeException( 'Эта модель не поддерживается.' );
-	}
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.0.0
+     */
+    protected static function createModel(
+        ModelMetadata $modelMetadata,
+        ProviderMetadata $providerMetadata
+    ): ModelInterface {
+        $capabilities = $modelMetadata->getSupportedCapabilities();
 
-	protected static function createProviderMetadata(): ProviderMetadata {
-		$args = [
-			'yandex-cloud',
-			'Яндекс Клауд',
-			ProviderTypeEnum::cloud(),
-			'https://console.yandex.cloud/folders',
-			RequestAuthenticationMethod::apiKey(),
-		];
+        foreach ($capabilities as $capability) {
+            if ($capability->isTextGeneration()) {
+                return new YandexTextGenerationModel($modelMetadata, $providerMetadata);
+            }
+        }
 
-		if ( version_compare( AiClient::VERSION, '1.2.0', '>=' ) ) {
-			$args[] = 'Для подключения укажите ключ в формате folder_id:api_key.';
-		}
+        foreach ($capabilities as $capability) {
+            if ($capability->isImageGeneration()) {
+                return new YandexImageGenerationModel($modelMetadata, $providerMetadata);
+            }
+        }
 
-		return new ProviderMetadata( ...$args );
-	}
+        throw new RuntimeException(
+            'Unsupported model capabilities for model: ' . $modelMetadata->getId()
+        );
+    }
 
-	protected static function createProviderAvailability(): ProviderAvailabilityInterface {
-		return new YandexProviderAvailability();
-	}
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.0.0
+     */
+    protected static function createProviderMetadata(): ProviderMetadata
+    {
+        return new ProviderMetadata(
+            'yandex-cloud',
+            'Яндекс Клауд',
+            ProviderTypeEnum::cloud(),
+            'https://console.yandex.cloud/folders',
+            RequestAuthenticationMethod::apiKey(),
+            'Для подключения укажите ключ в формате folder_id:api_key.'
+        );
+    }
 
-	protected static function createModelMetadataDirectory(): ModelMetadataDirectoryInterface {
-		return new YandexModelMetadataDirectory();
-	}
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.0.0
+     */
+    protected static function createProviderAvailability(): ProviderAvailabilityInterface
+    {
+        return new YandexProviderAvailability();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.0.0
+     */
+    protected static function createModelMetadataDirectory(): ModelMetadataDirectoryInterface
+    {
+        return new YandexModelMetadataDirectory();
+    }
+
+    /**
+     * Builds the URL of a Yandex Cloud operation endpoint.
+     *
+     * Yandex Cloud image generation is asynchronous: the generation request
+     * returns an operation ID, and the result is polled at the operation URL.
+     *
+     * @since 1.0.1
+     *
+     * @param string $operationId The Yandex Cloud operation ID.
+     * @return string The complete operation URL.
+     */
+    public static function operationsUrl(string $operationId): string
+    {
+        return self::BASE_DOMAIN . '/operations/' . rawurlencode($operationId);
+    }
 }
+
+// UPDATED by Opencode in 2026-09-18

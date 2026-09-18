@@ -1,17 +1,31 @@
 <?php
 
-spl_autoload_register( function( $name ) {
+/**
+ * PSR-4 autoloader for the AI Provider for Yandex Cloud package.
+ *
+ * @since 1.0.0
+ *
+ * @package WordPress\YandexCloudAiProvider
+ */
 
-	$prefix = 'WordPress\\YandexCloudAiProvider\\';
+declare(strict_types=1);
 
-	if ( strncmp( $name, $prefix, strlen( $prefix ) ) !== 0 ) {
-		return;
-	}
+spl_autoload_register(static function (string $class): void {
+    $prefix = 'WordPress\\YandexCloudAiProvider\\';
+    $baseDir = __DIR__ . '/';
 
-	$file = __DIR__ . '/' . str_replace( '\\', '/', substr( $name, strlen( $prefix ) ) ) . '.php';
+    $length = strlen($prefix);
 
-	if ( file_exists( $file ) ) {
-		require $file;
-	}
+    if (0 !== strncmp($class, $prefix, $length)) {
+        return;
+    }
 
-} );
+    $relativeClass = substr($class, $length);
+    $file = $baseDir . str_replace('\\', '/', $relativeClass) . '.php';
+
+    if (file_exists($file)) {
+        require $file;
+    }
+});
+
+// UPDATED by Opencode in 2026-09-18
