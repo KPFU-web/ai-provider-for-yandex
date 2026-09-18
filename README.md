@@ -43,3 +43,7 @@ folder_id:api_key
 
 - YandexART
 - YandexART 2.0
+
+> Для генерации изображений сервис YandexART должен быть активирован в папке в [консоли Яндекс Клауд](https://console.yandex.cloud/folders), иначе запрос вернёт 403 `Access to model ... denied`.
+
+<!-- UPDATED by Opencode in 2026-09-18 -->
