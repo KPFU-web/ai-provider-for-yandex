@@ -33,11 +33,18 @@ folder_id:api_key
 - YandexGPT Pro
 - YandexGPT Lite
 - YandexGPT Pro 32K
+- YandexGPT 5 Lite
+- YandexGPT 5 Pro
+- YandexGPT 5.1
 - Llama 3.3 70B
 - Llama 3.1 8B
 - Qwen3 235B
+- Qwen3.6 35B
+- DeepSeek V4 Flash
 - GPT OSS 120B
 - GPT OSS 20B
+
+Классические модели (YandexGPT Pro/Lite/32K, Llama) обслуживаются через gRPC Foundation Models API, остальные — через OpenAI-совместимый эндпоинт.
 
 Изображения:
 

@@ -5,7 +5,7 @@
  * Description: Подключает модели Яндекс Клауд к WordPress AI Client. В поле ключа вводить: folder_id:api_key
  * Requires at least: 7.0
  * Requires PHP: 8.0
- * Version: 1.0.1
+ * Version: 1.1.0
  * License: GPL-2.0-or-later
  * License URI: https://spdx.org/licenses/GPL-2.0-or-later.html
  * Text Domain: ai-provider-for-yandex
