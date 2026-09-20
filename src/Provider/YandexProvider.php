@@ -15,6 +15,7 @@ use WordPress\AiClient\Providers\Models\Contracts\ModelInterface;
 use WordPress\AiClient\Providers\Models\DTO\ModelMetadata;
 use WordPress\YandexCloudAiProvider\Metadata\YandexModelMetadataDirectory;
 use WordPress\YandexCloudAiProvider\Models\YandexImageGenerationModel;
+use WordPress\YandexCloudAiProvider\Models\YandexOpenAiTextGenerationModel;
 use WordPress\YandexCloudAiProvider\Models\YandexTextGenerationModel;
 
 /**
@@ -61,6 +62,10 @@ class YandexProvider extends AbstractApiProvider
 
         foreach ($capabilities as $capability) {
             if ($capability->isTextGeneration()) {
+                if (self::usesOpenAiApi($modelMetadata->getId())) {
+                    return new YandexOpenAiTextGenerationModel($modelMetadata, $providerMetadata);
+                }
+
                 return new YandexTextGenerationModel($modelMetadata, $providerMetadata);
             }
         }
@@ -74,6 +79,32 @@ class YandexProvider extends AbstractApiProvider
         throw new RuntimeException(
             'Unsupported model capabilities for model: ' . $modelMetadata->getId()
         );
+    }
+
+    /**
+     * Whether the given model is served through the OpenAI-compatible HTTP API.
+     *
+     * The OpenAI-compatible endpoint (ai.api.cloud.yandex.net/v1) hosts the
+     * newer Foundation models (DeepSeek, Qwen, GPT-OSS, YandexGPT 5.x), while
+     * the classic models are only reachable through the gRPC Foundation Models
+     * completion API.
+     *
+     * @since 1.1.0
+     *
+     * @param string $modelId The model ID.
+     * @return bool True when the model must be requested via the OpenAI API.
+     */
+    private static function usesOpenAiApi(string $modelId): bool
+    {
+        $grcpOnly = [
+            'yandexgpt',
+            'yandexgpt-lite',
+            'yandexgpt-32k',
+            'llama',
+            'llama-lite',
+        ];
+
+        return !in_array($modelId, $grcpOnly, true);
     }
 
     /**
